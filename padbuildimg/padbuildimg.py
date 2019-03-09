@@ -1,9 +1,11 @@
 import json
 import math
 import csv
+import os
 
 import discord
 from discord.ext import commands
+import aiohttp
 from ply import lex, yacc
 from png import itertools
 from PIL import Image
@@ -85,7 +87,10 @@ LATENTS_MAP = {
     31: 'sdr'
 }
 REVERSE_LATENTS_MAP = {v: k for k, v in LATENTS_MAP.items()}
-
+AWK_CIRCLE = 'circle'
+AWK_STAR = 'star'
+DELAY_BUFFER = 'delay_buffer'
+REMOTE_ASSET_URL = 'https://github.com/Mushymato/pdchu/raw/master/assets/'
 
 class DictWithAttributeAccess(dict):
     def __getattr__(self, key):
@@ -98,14 +103,18 @@ class DictWithAttributeAccess(dict):
 class PadBuildImgSettings(CogSettings):
     def make_default_build_img_params(self):
         build_img_params = DictWithAttributeAccess({
-            'ASSETS_DIR': './assets/',
-            'PORTRAIT_DIR': './portrait/',
-            'OUTPUT_DIR': './output/',
+            'ASSETS_DIR': './data/padbuildimg/assets/',
+            'PORTRAIT_DIR': './data/padbuildimg/portrait/',
+            'OUTPUT_DIR': './data/padbuildimg/output/',
             'PORTRAIT_WIDTH': 100,
             'PADDING': 10,
             'LATENTS_WIDTH': 25,
             'FONT_NAME': 'OpenSans-ExtraBold.ttf'
         })
+        if not os.path.exists(build_img_params.ASSETS_DIR):
+            os.mkdir(build_img_params.ASSETS_DIR)
+        if not os.path.exists(build_img_params.OUTPUT_DIR):
+            os.mkdir(build_img_params.OUTPUT_DIR)
         return build_img_params
 
     def emojiServers(self):
@@ -132,6 +141,21 @@ class PadBuildImgSettings(CogSettings):
             self.bot_settings['build_img_params'][key] = value
             self.save_settings()
 
+    async def downloadAssets(self, source, target):
+        async with aiohttp.ClientSession() as session:
+            async with session.get(source) as resp:
+                data = await resp.read()
+                with open(target, "wb") as f:
+                    f.write(data)
+
+    async def downloadAllAssets(self):
+        params = self.buildImgParams()
+        for idx, lat in LATENTS_MAP.items():
+            await self.downloadAssets(REMOTE_ASSET_URL + lat + '.png', params.ASSETS_DIR + lat + '.png')
+        await self.downloadAssets(REMOTE_ASSET_URL + AWK_CIRCLE + '.png', params.ASSETS_DIR + AWK_CIRCLE + '.png')
+        await self.downloadAssets(REMOTE_ASSET_URL + AWK_STAR + '.png', params.ASSETS_DIR + AWK_STAR + '.png')
+        await self.downloadAssets(REMOTE_ASSET_URL + DELAY_BUFFER + '.png', params.ASSETS_DIR + DELAY_BUFFER + '.png')
+        await self.downloadAssets(REMOTE_ASSET_URL + DELAY_BUFFER, params.ASSETS_DIR + params.FONT_NAME)
 
 class PaDTeamLexer(object):
     tokens = [
@@ -306,7 +330,7 @@ class PadBuildImageGenerator(object):
                     assist_str = tok.value
                 elif tok.type == 'ID':
                     if tok.value == 'sdr':
-                        result_card['ID'] = 'delay_buffer'
+                        result_card['ID'] = DELAY_BUFFER
                     else:
                         m, err, debug_info = self.padinfo_cog.findMonster(tok.value)
                         if m is None:
@@ -374,8 +398,8 @@ class PadBuildImageGenerator(object):
         return latents_bar
 
     def combine_portrait(self, card, show_awakes):
-        if card['ID'] == 'delay_buffer':
-            return Image.open(self.params.ASSETS_DIR + 'delay_buffer.png')
+        if card['ID'] == DELAY_BUFFER:
+            return Image.open(self.params.ASSETS_DIR + DELAY_BUFFER + '.png')
         portrait = Image.open(self.params.PORTRAIT_DIR + str(card['ID']) + '.png')
         draw = ImageDraw.Draw(portrait)
         # + eggs
@@ -405,9 +429,9 @@ class PadBuildImageGenerator(object):
         if show_awakes:
             # awakening
             if card['AWAKE'] >= 9:
-                awake = Image.open(self.params.ASSETS_DIR + 'star.png')
+                awake = Image.open(self.params.ASSETS_DIR + AWK_STAR + '.png')
             else:
-                awake = Image.open(self.params.ASSETS_DIR + 'circle.png')
+                awake = Image.open(self.params.ASSETS_DIR + AWK_CIRCLE + '.png')
                 draw = ImageDraw.Draw(awake)
                 draw.text((9, -2), str(card['AWAKE']),
                           font=ImageFont.truetype(self.params.FONT_NAME, 24), fill='yellow')
@@ -545,10 +569,19 @@ class PadBuildImage:
             param_value = int(param_value)
         if param_key in ['ASSETS_DIR', 'PORTRAIT_DIR', 'OUTPUT_DIR'] \
                 and param_value[-1] not in ['/', '\\']:
-            print(param_value[-1])
             param_value += '/'
         self.settings.setBuildImgParamsByKey(param_key, param_value)
         await self.bot.say(box('Set {} to {}'.format(param_key, param_value)))
+
+    @commands.command(pass_context=True)
+    @checks.is_owner()
+    async def refreshassets(self, ctx):
+        """
+        Refresh assets folder
+        """
+        await self.bot.say('Downloading assets to {}'.format(self.settings.buildImgParams().ASSETS_DIR))
+        await self.settings.downloadAllAssets()
+        await self.bot.say('Done')
 
 
 def setup(bot):
