@@ -335,7 +335,7 @@ class PadBuildImageGenerator(object):
                         m, err, debug_info = self.padinfo_cog.findMonster(tok.value)
                         if m is None:
                             raise ValueError('{} not found'.format(tok.value))
-                        result_card['ID'] = m.monster_no
+                        result_card['ID'] = m.monster_no_jp
                 elif tok.type == 'P_ALL':
                     if tok.value == 0:
                         result_card['+HP'] = 0
