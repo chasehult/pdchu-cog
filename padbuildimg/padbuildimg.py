@@ -155,7 +155,7 @@ class PadBuildImgSettings(CogSettings):
         await self.downloadAssets(REMOTE_ASSET_URL + AWK_CIRCLE + '.png', params.ASSETS_DIR + AWK_CIRCLE + '.png')
         await self.downloadAssets(REMOTE_ASSET_URL + AWK_STAR + '.png', params.ASSETS_DIR + AWK_STAR + '.png')
         await self.downloadAssets(REMOTE_ASSET_URL + DELAY_BUFFER + '.png', params.ASSETS_DIR + DELAY_BUFFER + '.png')
-        await self.downloadAssets(REMOTE_ASSET_URL + DELAY_BUFFER, params.ASSETS_DIR + params.FONT_NAME)
+        await self.downloadAssets(REMOTE_ASSET_URL + params.FONT_NAME, params.ASSETS_DIR + params.FONT_NAME)
 
 class PaDTeamLexer(object):
     tokens = [
