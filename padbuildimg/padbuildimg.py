@@ -2,6 +2,7 @@ import json
 import math
 import csv
 import os
+import io
 
 import discord
 from discord.ext import commands
@@ -109,7 +110,7 @@ class PadBuildImgSettings(CogSettings):
             'PORTRAIT_WIDTH': 100,
             'PADDING': 10,
             'LATENTS_WIDTH': 25,
-            'FONT_NAME': 'OpenSans-ExtraBold.ttf'
+            'FONT_NAME': './data/padbuildimg/assets/OpenSans-ExtraBold.ttf'
         })
         if not os.path.exists(build_img_params.ASSETS_DIR):
             os.mkdir(build_img_params.ASSETS_DIR)
@@ -155,7 +156,8 @@ class PadBuildImgSettings(CogSettings):
         await self.downloadAssets(REMOTE_ASSET_URL + AWK_CIRCLE + '.png', params.ASSETS_DIR + AWK_CIRCLE + '.png')
         await self.downloadAssets(REMOTE_ASSET_URL + AWK_STAR + '.png', params.ASSETS_DIR + AWK_STAR + '.png')
         await self.downloadAssets(REMOTE_ASSET_URL + DELAY_BUFFER + '.png', params.ASSETS_DIR + DELAY_BUFFER + '.png')
-        await self.downloadAssets(REMOTE_ASSET_URL + params.FONT_NAME, params.ASSETS_DIR + params.FONT_NAME)
+        font_name = os.path.basename(params.FONT_NAME)
+        await self.downloadAssets(REMOTE_ASSET_URL + font_name, params.ASSETS_DIR + font_name)
 
 class PaDTeamLexer(object):
     tokens = [
@@ -163,6 +165,7 @@ class PaDTeamLexer(object):
         'ASSIST',
         'LATENT',
         'STATS',
+        'SPACES',
         'LV',
         'SLV',
         'AWAKE',
@@ -175,6 +178,7 @@ class PaDTeamLexer(object):
     def t_ID(self, t):
         r'^.+?(?=[\(\|\[])|^(?!.*[\(\|\[].*).+'
         # first word before ( or [ or { or entire word if those characters are not in string
+        t.value = t.value.strip()
         return t
 
     def t_ASSIST(self, t):
@@ -211,7 +215,12 @@ class PaDTeamLexer(object):
 
     def t_STATS(self, t):
         r'\|'
-        return t
+        pass
+
+    def t_SPACES(self, t):
+        r'\s'
+        # spaces must be checked after ID
+        pass
 
     def t_P_ALL(self, t):
         r'\+\d{1,3}'
@@ -239,7 +248,7 @@ class PaDTeamLexer(object):
         t.value = int(t.value[2:])
         return t
 
-    t_ignore = ' \t\n'
+    t_ignore = '\t\n'
 
     def t_error(self, t):
         raise ValueError("Unknown text '{}' at position {}".format(t.value, t.lexpos))
@@ -286,7 +295,6 @@ class PadBuildImageGenerator(object):
         self.params = params
         self.padinfo_cog = padinfo_cog
         self.lexer = PaDTeamLexer().build()
-        self.err_msg = []
         self.build = {
             'NAME': build_name,
             'TEAM': [],
@@ -307,7 +315,7 @@ class PadBuildImageGenerator(object):
                 '+HP': 99,
                 '+RCV': 99,
                 'AWAKE': 9,
-                'ID': 1,
+                'ID': 0,
                 'LATENT': None,
                 'LV': 99,
                 'SLV': 0
@@ -318,7 +326,7 @@ class PadBuildImageGenerator(object):
                 '+HP': 0,
                 '+RCV': 0,
                 'AWAKE': 9,
-                'ID': 1,
+                'ID': 0,
                 'LATENT': None,
                 'LV': 0,
                 'SLV': 0
@@ -329,7 +337,7 @@ class PadBuildImageGenerator(object):
                 if tok.type == 'ASSIST':
                     assist_str = tok.value
                 elif tok.type == 'ID':
-                    if tok.value == 'sdr':
+                    if tok.value.lower() == 'sdr':
                         result_card['ID'] = DELAY_BUFFER
                     else:
                         m, err, debug_info = self.padinfo_cog.findMonster(tok.value)
@@ -348,8 +356,8 @@ class PadBuildImageGenerator(object):
                 elif tok.type != 'STATS':
                     result_card[tok.type.replace('P_', '+')] = tok.value
         except Exception as ex:
-            self.err_msg.append(str(ex))
-            return result_card if is_assist else [None, None]
+            print('padbuildimg: {}'.format(str(ex)))
+            return None if is_assist else [None, None]
 
         if is_assist:
             return result_card
@@ -443,7 +451,6 @@ class PadBuildImageGenerator(object):
 
     def generate_build_image(self, include_instructions=False):
         if self.build is None:
-            self.err_msg.append('Empty build')
             return
         p_w = self.params.PORTRAIT_WIDTH * math.ceil(len(self.build['TEAM'][0]) / 2) + \
               self.params.PADDING * math.ceil(len(self.build['TEAM'][0]) / 10)
@@ -509,18 +516,24 @@ class PadBuildImageGenerator(object):
 
         self.build_img = trim(self.build_img)
 
-    def save_current_build_img(self):
+    def save_current_build_img_to_disk(self):
         fpath = self.params.OUTPUT_DIR + filename(self.build['NAME']) + '.png'
         if self.build_img is not None:
             self.build_img.save(fpath)
             return fpath
 
-    def save_current_build_json(self):
+    def save_current_build_json_to_disk(self):
         fpath = self.params.OUTPUT_DIR + filename(self.build['NAME']) + '.json'
         if self.build is not None:
             with open(fpath, 'w') as fp:
                 json.dump(self.build, fp, indent=4, sort_keys=True)
             return fpath
+
+    def build_img_io(self):
+        if self.build_img is not None:
+            build_io = io.BytesIO()
+            self.build_img.save(build_io, format="PNG")
+            return build_io
 
 
 class PadBuildImage:
@@ -544,11 +557,14 @@ class PadBuildImage:
 
         pbg = PadBuildImageGenerator(build_str, params, self.bot.get_cog('PadInfo'))
         pbg.generate_build_image()
-        pbg.save_current_build_json()
-        fpath = pbg.save_current_build_img()
-        if fpath:
-            with open(fpath, mode='rb') as data:
-                await self.bot.send_file(ctx.message.channel, fp=data, filename='pad_build.png')
+        if pbg.build_img is not None:
+            with io.BytesIO() as build_io:
+                pbg.build_img.save(build_io, format="PNG")
+                build_io.seek(0)
+                await self.bot.send_file(
+                    ctx.message.channel,
+                    fp=build_io,
+                    filename='pad_build.png')
         else:
             await self.bot.say(box('Invalid build, see ^helpbuildimg'))
 
