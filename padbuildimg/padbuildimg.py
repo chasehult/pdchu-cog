@@ -457,7 +457,7 @@ class PadBuildImageGenerator(object):
                                     (255, 255, 255, 0))
         y_offset = 0
         for team in self.build['TEAM']:
-            has_assist = not any([card is None for idx, card in enumerate(team) if idx % 2 == 1])
+            has_assist = any([card is not None for idx, card in enumerate(team) if idx % 2 == 1])
             has_latents = any([card['LATENT'] is not None for idx, card in enumerate(team)
                                if idx % 2 == 0 and card is not None])
             for idx, card in enumerate(team):
