@@ -1,14 +1,13 @@
-import json
 import math
 import csv
 import os
 import io
+import time
 
 import discord
 from discord.ext import commands
 import aiohttp
-from ply import lex, yacc
-from png import itertools
+from ply import lex
 from PIL import Image
 from PIL import ImageDraw
 from PIL import ImageFont
@@ -16,13 +15,9 @@ from PIL import ImageChops
 
 from __main__ import user_allowed, send_cmd_help
 
-from . import rpadutils
-from . import padinfo
 from .rpadutils import CogSettings
 from .utils import checks
-from .utils.chat_formatting import box, inline, pagify
-
-
+from .utils.chat_formatting import box, inline
 
 HELP_MSG = """
 ^buildimg <build_shorthand>
@@ -42,7 +37,7 @@ Latent Acronyms:
     Resists (+ for 2 slot): rres, bres, gres, lres, dres, rres+, bres+, gres+, lres+, dres+
     Others: sdr, ah(autoheal)
 Stats Format:
-    | LV### SLV## AW# +H## +A## +R## +(297|0)
+    | LV### SLV## AW# +H## +A## +R## +(0 or 297)
     | indicates end of card name and start of stats
     LV: level, 1 to 110
     SLV: skill level, 1 to 99
@@ -88,10 +83,20 @@ LATENTS_MAP = {
     31: 'sdr'
 }
 REVERSE_LATENTS_MAP = {v: k for k, v in LATENTS_MAP.items()}
+TYPE_TO_KILLERS_MAP = {
+    'God': [7],  # devil
+    'Devil': [5],  # god
+    'Machine': [5, 1],  # god balanced
+    'Dragon': [8, 3],  # machine healer
+    'Physical': [8, 3],  # machine healer
+    'Attacker': [7, 2],  # devil physical
+    'Healer': [4, 6],  # dragon attacker
+}
 AWK_CIRCLE = 'circle'
 AWK_STAR = 'star'
 DELAY_BUFFER = 'delay_buffer'
 REMOTE_ASSET_URL = 'https://github.com/Mushymato/pdchu/raw/master/assets/'
+
 
 class DictWithAttributeAccess(dict):
     def __getattr__(self, key):
@@ -118,21 +123,10 @@ class PadBuildImgSettings(CogSettings):
             os.mkdir(build_img_params.OUTPUT_DIR)
         return build_img_params
 
-    def emojiServers(self):
-        key = 'emoji_servers'
-        if key not in self.bot_settings:
-            self.bot_settings[key] = []
-        return self.bot_settings[key]
-
-    def setEmojiServers(self, emoji_servers):
-        es = self.emojiServers()
-        es.clear()
-        es.extend(emoji_servers)
-        self.save_settings()
-
     def buildImgParams(self):
         if 'build_img_params' not in self.bot_settings:
             self.bot_settings['build_img_params'] = self.make_default_build_img_params()
+            self.save_settings()
         return DictWithAttributeAccess(self.bot_settings['build_img_params'])
 
     def setBuildImgParamsByKey(self, key, value):
@@ -140,7 +134,7 @@ class PadBuildImgSettings(CogSettings):
             self.bot_settings['build_img_params'] = self.make_default_build_img_params()
         if key in self.bot_settings['build_img_params']:
             self.bot_settings['build_img_params'][key] = value
-            self.save_settings()
+        self.save_settings()
 
     async def downloadAssets(self, source, target):
         async with aiohttp.ClientSession() as session:
@@ -158,6 +152,23 @@ class PadBuildImgSettings(CogSettings):
         await self.downloadAssets(REMOTE_ASSET_URL + DELAY_BUFFER + '.png', params.ASSETS_DIR + DELAY_BUFFER + '.png')
         font_name = os.path.basename(params.FONT_NAME)
         await self.downloadAssets(REMOTE_ASSET_URL + font_name, params.ASSETS_DIR + font_name)
+
+    def dmOnly(self, server_id):
+        if 'dm_only' not in self.bot_settings:
+            self.bot_settings['dm_only'] = []
+            self.save_settings()
+        return server_id in self.bot_settings['dm_only']
+
+    def toggleDmOnly(self, server_id):
+        if 'dm_only' not in self.bot_settings:
+            self.bot_settings['dm_only'] = []
+        else:
+            if server_id in self.bot_settings['dm_only']:
+                self.bot_settings['dm_only'].remove(server_id)
+            else:
+                self.bot_settings['dm_only'].append(server_id)
+        self.save_settings()
+
 
 class PaDTeamLexer(object):
     tokens = [
@@ -190,7 +201,8 @@ class PaDTeamLexer(object):
     def t_LATENT(self, t):
         r'\[.+?\]'
         # words in []
-        t.value = [REVERSE_LATENTS_MAP[l] for l in t.value.strip('[]').split(',')]
+        t.value = [l.strip().lower() for l in t.value.strip('[]').split(',')]
+        t.value = [REVERSE_LATENTS_MAP[l] for l in t.value if l in REVERSE_LATENTS_MAP]
         return t
 
     def t_LV(self, t):
@@ -226,25 +238,23 @@ class PaDTeamLexer(object):
         r'\+\d{1,3}'
         # + followed by 0 or 297
         t.value = int(t.value[1:])
-        if t.value > 297:
-            t.value = 297
         return t
 
     def t_P_HP(self, t):
         r'\+[hH]\d{1,2}'
-        # +H followed by 2 digit number
+        # +H followed by 1~2 digit number
         t.value = int(t.value[2:])
         return t
 
     def t_P_ATK(self, t):
         r'\+[aA]\d{1,2}'
-        # +A followed by 2 digit number
+        # +A followed by 1~2 digit number
         t.value = int(t.value[2:])
         return t
 
     def t_P_RCV(self, t):
         r'\+[rR]\d{1,2}'
-        # +R followed by 2 digit number
+        # +R followed by 1~2 digit number
         t.value = int(t.value[2:])
         return t
 
@@ -257,6 +267,19 @@ class PaDTeamLexer(object):
         # pass debug=1 to enable verbose output
         self.lexer = lex.lex(module=self)
         return self.lexer
+
+
+def validate_latents(card_types, latents):
+    if card_types is None:
+        return None
+    if 'Balance' in card_types:
+        return latents
+    for idx, l in enumerate(latents):
+        if 0 < l < 9:
+            if not any([l in TYPE_TO_KILLERS_MAP[t] for t in card_types if t is not None]):
+                latents[idx] = None
+    latents = [l for l in latents if l is not None]
+    return latents if len(latents) > 0 else None
 
 
 def outline_text(draw, x, y, font, text_color, text, thickness=1):
@@ -277,17 +300,12 @@ def trim(im):
         return im.crop(bbox)
 
 
-def filename(name):
-    keep_characters = ('.', '_')
-    return "".join(c for c in name if c.isalnum() or c in keep_characters).rstrip()
-
-
 def text_center_pad(font_size, line_height):
     return math.floor((line_height - font_size) / 3)
 
 
 def idx_to_xy(idx):
-        return idx // 2, (idx + 1) % 2
+    return idx // 2, - (idx % 2)
 
 
 class PadBuildImageGenerator(object):
@@ -300,12 +318,15 @@ class PadBuildImageGenerator(object):
             'TEAM': [],
             'INSTRUCTION': None
         }
+        self.build_img = None
+        self.process_build(input_str)
+
+    def process_build(self, input_str):
         for team in [row for row in csv.reader(input_str.split(';'), delimiter='/')]:
             team_sublist = []
             for slot in team:
                 team_sublist.extend(self.process_card(slot))
             self.build['TEAM'].append(team_sublist)
-        self.build_img = None
 
     def process_card(self, card_str, is_assist=False):
         self.lexer.input(card_str)
@@ -318,7 +339,8 @@ class PadBuildImageGenerator(object):
                 'ID': 0,
                 'LATENT': None,
                 'LV': 99,
-                'SLV': 0
+                'SLV': 0,
+                'ON_COLOR': True
             }
         else:
             result_card = {
@@ -329,11 +351,15 @@ class PadBuildImageGenerator(object):
                 'ID': 0,
                 'LATENT': None,
                 'LV': 0,
-                'SLV': 0
+                'SLV': 0,
+                'ON_COLOR': False
             }
         assist_str = None
+        card_att = None
+        card_types = None
         try:
             for tok in iter(self.lexer.token, None):
+                # print('{} - {}'.format(tok.type, tok.value))
                 if tok.type == 'ASSIST':
                     assist_str = tok.value
                 elif tok.type == 'ID':
@@ -342,17 +368,21 @@ class PadBuildImageGenerator(object):
                     else:
                         m, err, debug_info = self.padinfo_cog.findMonster(tok.value)
                         if m is None:
-                            raise ValueError('{} not found'.format(tok.value))
+                            raise err
                         result_card['ID'] = m.monster_no_jp
+                        card_att = m.attr1
+                        card_types = [m.type1, m.type2, m.type3]
+                elif tok.type == 'LATENT':
+                    result_card['LATENT'] = validate_latents(card_types, tok.value)
                 elif tok.type == 'P_ALL':
-                    if tok.value == 0:
-                        result_card['+HP'] = 0
-                        result_card['+ATK'] = 0
-                        result_card['+RCV'] = 0
-                    else:
+                    if tok.value >= 297:
                         result_card['+HP'] = 99
                         result_card['+ATK'] = 99
                         result_card['+RCV'] = 99
+                    else:
+                        result_card['+HP'] = 0
+                        result_card['+ATK'] = 0
+                        result_card['+RCV'] = 0
                 elif tok.type != 'STATS':
                     result_card[tok.type.replace('P_', '+')] = tok.value
         except Exception as ex:
@@ -360,10 +390,13 @@ class PadBuildImageGenerator(object):
             return None if is_assist else [None, None]
 
         if is_assist:
-            return result_card
+            return result_card, card_att
         else:
             if isinstance(assist_str, str):
-                return [result_card, self.process_card(assist_str, is_assist=True)]
+                assist_card, assist_att = self.process_card(assist_str, is_assist=True)
+                if card_att is not None and assist_att is not None:
+                    assist_card['ON_COLOR'] = card_att == assist_att
+                return [result_card, assist_card]
             else:
                 return [result_card, None]
 
@@ -405,28 +438,33 @@ class PadBuildImageGenerator(object):
                 break
         return latents_bar
 
-    def combine_portrait(self, card, show_awakes):
+    def combine_portrait(self, card, show_stats=True, show_awakes=True):
         if card['ID'] == DELAY_BUFFER:
             return Image.open(self.params.ASSETS_DIR + DELAY_BUFFER + '.png')
-        portrait = Image.open(self.params.PORTRAIT_DIR + str(card['ID']) + '.png')
+        try:
+            portrait = Image.open(self.params.PORTRAIT_DIR + str(card['ID']) + '.png')
+        except Exception as ex:
+            print('padbuildimg: {}'.format(str(ex)))
+            return None
         draw = ImageDraw.Draw(portrait)
-        # + eggs
-        sum_plus = card['+HP'] + card['+ATK'] + card['+RCV']
-        if 0 < sum_plus:
-            if sum_plus < 297:
-                font = ImageFont.truetype(self.params.FONT_NAME, 14)
-                outline_text(draw, 5, 2, font, 'yellow', '+{:d} HP'.format(card['+HP']))
-                outline_text(draw, 5, 14, font, 'yellow', '+{:d} ATK'.format(card['+ATK']))
-                outline_text(draw, 5, 26, font, 'yellow', '+{:d} RCV'.format(card['+RCV']))
-            else:
-                font = ImageFont.truetype(self.params.FONT_NAME, 18)
-                outline_text(draw, 5, 0, font, 'yellow', '+297')
-        # level
         slv_offset = 80
-        if card['LV'] > 0:
-            outline_text(draw, 5, 75, ImageFont.truetype(self.params.FONT_NAME, 18),
-                         'white', 'Lv.{:d}'.format(card['LV']))
-            slv_offset = 62
+        if show_stats:
+            # + eggs
+            sum_plus = card['+HP'] + card['+ATK'] + card['+RCV']
+            if 0 < sum_plus:
+                if sum_plus < 297:
+                    font = ImageFont.truetype(self.params.FONT_NAME, 14)
+                    outline_text(draw, 5, 2, font, 'yellow', '+{:d} HP'.format(card['+HP']))
+                    outline_text(draw, 5, 14, font, 'yellow', '+{:d} ATK'.format(card['+ATK']))
+                    outline_text(draw, 5, 26, font, 'yellow', '+{:d} RCV'.format(card['+RCV']))
+                else:
+                    font = ImageFont.truetype(self.params.FONT_NAME, 18)
+                    outline_text(draw, 5, 0, font, 'yellow', '+297')
+            # level
+            if card['LV'] > 0:
+                outline_text(draw, 5, 75, ImageFont.truetype(self.params.FONT_NAME, 18),
+                             'white', 'Lv.{:d}'.format(card['LV']))
+                slv_offset = 62
         # skill level
         if card['SLV'] > 0:
             outline_text(draw, 5, slv_offset,
@@ -460,19 +498,26 @@ class PadBuildImageGenerator(object):
         if include_instructions:
             p_h += len(self.build['INSTRUCTION']) * (self.params.PORTRAIT_WIDTH // 2 + self.params.PADDING)
         self.build_img = Image.new('RGBA',
-                                    (p_w, p_h),
-                                    (255, 255, 255, 0))
+                                   (p_w, p_h),
+                                   (255, 255, 255, 0))
         y_offset = 0
         for team in self.build['TEAM']:
             has_assist = any([card is not None for idx, card in enumerate(team) if idx % 2 == 1])
             has_latents = any([card['LATENT'] is not None for idx, card in enumerate(team)
                                if idx % 2 == 0 and card is not None])
+            if has_assist:
+                y_offset += self.params.PORTRAIT_WIDTH
             for idx, card in enumerate(team):
                 if idx > 11 or idx > 9 and len(self.build['TEAM']) > 1:
                     break
-                if card:
+                if card is not None:
                     x, y = idx_to_xy(idx)
-                    portrait = self.combine_portrait(card, idx % 2 == 0)
+                    portrait = self.combine_portrait(
+                        card,
+                        show_stats=card['ON_COLOR'],
+                        show_awakes=idx % 2 == 0)
+                    if portrait is None:
+                        continue
                     x_offset = self.params.PADDING * math.ceil(x / 4)
                     self.build_img.paste(
                         portrait,
@@ -484,9 +529,9 @@ class PadBuildImageGenerator(object):
                             latents,
                             (x_offset + x * self.params.PORTRAIT_WIDTH,
                              y_offset + (y + 1) * self.params.PORTRAIT_WIDTH))
+                        latents.close()
+                    portrait.close()
             y_offset += self.params.PORTRAIT_WIDTH + self.params.PADDING * 2
-            if has_assist:
-                y_offset += self.params.PORTRAIT_WIDTH
             if has_latents:
                 y_offset += self.params.LATENTS_WIDTH * 2
 
@@ -516,25 +561,6 @@ class PadBuildImageGenerator(object):
 
         self.build_img = trim(self.build_img)
 
-    def save_current_build_img_to_disk(self):
-        fpath = self.params.OUTPUT_DIR + filename(self.build['NAME']) + '.png'
-        if self.build_img is not None:
-            self.build_img.save(fpath)
-            return fpath
-
-    def save_current_build_json_to_disk(self):
-        fpath = self.params.OUTPUT_DIR + filename(self.build['NAME']) + '.json'
-        if self.build is not None:
-            with open(fpath, 'w') as fp:
-                json.dump(self.build, fp, indent=4, sort_keys=True)
-            return fpath
-
-    def build_img_io(self):
-        if self.build_img is not None:
-            build_io = io.BytesIO()
-            self.build_img.save(build_io, format="PNG")
-            return build_io
-
 
 class PadBuildImage:
     """PAD Build Image Generator."""
@@ -545,41 +571,62 @@ class PadBuildImage:
 
     @commands.command(pass_context=True)
     async def helpbuildimg(self, ctx):
-        """Help info for the search command."""
+        """Help info for the buildimage command."""
         await self.bot.whisper(box(HELP_MSG))
+        if checks.admin_or_permissions(manage_server=True):
+            await self.bot.whisper(box('Output location can be changed between current channel and '
+                                       'direct messages via ^togglebuildimgoutput'))
 
     @commands.command(pass_context=True, aliases=['buildimg', 'pdchu'])
     async def padbuildimg(self, ctx, *, build_str: str):
         """Create a build image based on input.
         Use ^helpbuildimg for more info.
         """
-        params = self.settings.buildImgParams()
+        # print('BUILD_STR: {}'.format(build_str))
 
+        # start = time.perf_counter()
+        params = self.settings.buildImgParams()
         pbg = PadBuildImageGenerator(build_str, params, self.bot.get_cog('PadInfo'))
+        # print('PARSE: {}'.format(time.perf_counter() - start))
+
+        # start = time.perf_counter()
         pbg.generate_build_image()
+        # print('DRAW: {}'.format(time.perf_counter() - start))
+
+        # start = time.perf_counter()
         if pbg.build_img is not None:
             with io.BytesIO() as build_io:
-                pbg.build_img.save(build_io, format="PNG")
+                pbg.build_img.save(build_io, format='PNG')
                 build_io.seek(0)
-                await self.bot.send_file(
-                    ctx.message.channel,
-                    fp=build_io,
-                    filename='pad_build.png')
+                if self.settings.dmOnly(ctx.message.server.id):
+                    try:
+                        await self.bot.send_file(
+                            ctx.message.author,
+                            fp=build_io,
+                            filename='pad_build.png')
+                        await self.bot.say(inline('Sent build to {}'.format(ctx.message.author)))
+                    except discord.errors.Forbidden as ex:
+                        await self.bot.say(inline('Failed to send build to {}'.format(ctx.message.author)))
+                else:
+                    await self.bot.send_file(
+                        ctx.message.channel,
+                        fp=build_io,
+                        filename='pad_build.png')
         else:
             await self.bot.say(box('Invalid build, see ^helpbuildimg'))
+        # print('UPLOAD: {}'.format(time.perf_counter() - start))
 
     @commands.command(pass_context=True)
     @checks.is_owner()
     async def configbuildimg(self, ctx, param_key: str, param_value: str):
         """
         Configure PadBuildImageGenerator parameters:
-            ASSETS_DIR
-            PORTRAIT_DIR
-            OUTPUT_DIR
-            PORTRAIT_WIDTH
-            PADDING
-            LATENTS_WIDTH
-            FONT_NAME
+            ASSETS_DIR - directory for storing assets (use ^refreshassets to update)
+            PORTRAIT_DIR - path to pad monster portraits with name format of <monster_no>.png
+            PORTRAIT_WIDTH - width of portraits, default 100
+            PADDING - padding between various things, default 10
+            LATENTS_WIDTH - width of 1 slot latent, default 25
+            FONT_NAME - path to font
         """
         if param_key in ['PORTRAIT_WIDTH', 'PADDING', 'LATENTS_WIDTH']:
             param_value = int(param_value)
@@ -598,6 +645,18 @@ class PadBuildImage:
         await self.bot.say('Downloading assets to {}'.format(self.settings.buildImgParams().ASSETS_DIR))
         await self.settings.downloadAllAssets()
         await self.bot.say('Done')
+
+    @commands.command(pass_context=True)
+    @checks.admin_or_permissions(manage_server=True)
+    async def togglebuildimgoutput(self, ctx):
+        """
+        Toggles between sending result to server vs sending result to direct message
+        """
+        self.settings.toggleDmOnly(ctx.message.server.id)
+        if self.settings.dmOnly(ctx.message.server.id):
+            await self.bot.say('Response mode set to direct message')
+        else:
+            await self.bot.say('Response mode set to current channel')
 
 
 def setup(bot):
