@@ -25,7 +25,7 @@ HELP_MSG = """
 Generates an image representing a team.
 
 Format: 
-    card name(assist)[latent,latent]|Stats
+    card name(assist)[latent,latent]*repeat|Stats
     Card name must be first, otherwise the order does not matter
     Separate each card with /
     Separate each team with ;
@@ -36,6 +36,9 @@ Latent Acronyms:
     Stats (+ for 2 slot): hp, atk, rcv, all(all stat), hp+, atk+, rcv+
     Resists (+ for 2 slot): rres, bres, gres, lres, dres, rres+, bres+, gres+, lres+, dres+
     Others: sdr, ah(autoheal)
+Repeat:
+    *# defines number of times to repeat this particular card
+    e.g. whaledor(plutus)*3/whaledor(carat)*2 creates a team of 3 whaledor(plutus) followed by 2 whaledor(carat)
 Stats Format:
     | LV### SLV## AW# +H## +A## +R## +(0 or 297)
     | indicates end of card name and start of stats
@@ -184,16 +187,17 @@ class PaDTeamLexer(object):
         'P_ATK',
         'P_RCV',
         'P_ALL',
+        'REPEAT',
     ]
 
     def t_ID(self, t):
-        r'^.+?(?=[\(\|\[])|^(?!.*[\(\|\[].*).+'
-        # first word before ( or [ or { or entire word if those characters are not in string
+        r'^.+?(?=[\(\|\[\*])|^(?!.*[\(\|\[\*].*).+'
+        # first word before ( or [ or | or * entire word if those characters are not in string
         t.value = t.value.strip()
         return t
 
     def t_ASSIST(self, t):
-        r'\(.+?\)'
+        r'\(.*?\)'
         # words in ()
         t.value = t.value.strip('()')
         return t
@@ -205,26 +209,6 @@ class PaDTeamLexer(object):
         t.value = [REVERSE_LATENTS_MAP[l] for l in t.value if l in REVERSE_LATENTS_MAP]
         return t
 
-    def t_LV(self, t):
-        r'[lL][vV]\d{1,3}'
-        # LV followed by 1~3 digit number
-        t.value = int(t.value[2:])
-        if t.value > 110:
-            t.value = 110
-        return t
-
-    def t_SLV(self, t):
-        r'[sS][lL][vV]\d{1,2}'
-        # SL followed by 1~2 digit number
-        t.value = int(t.value[3:])
-        return t
-
-    def t_AWAKE(self, t):
-        r'[aA][wW]\d'
-        # AW followed by 1 digit number
-        t.value = int(t.value[2:])
-        return t
-
     def t_STATS(self, t):
         r'\|'
         pass
@@ -234,34 +218,58 @@ class PaDTeamLexer(object):
         # spaces must be checked after ID
         pass
 
+    def t_LV(self, t):
+        r'[lL][vV]\s?\d{1,3}'
+        # LV followed by 1~3 digit number
+        t.value = int(t.value[2:])
+        return t
+
+    def t_SLV(self, t):
+        r'[sS][lL][vV]\s?\d{1,2}'
+        # SL followed by 1~2 digit number
+        t.value = int(t.value[3:])
+        return t
+
+    def t_AWAKE(self, t):
+        r'[aA][wW]\s?\d'
+        # AW followed by 1 digit number
+        t.value = int(t.value[2:])
+        return t
+
     def t_P_ALL(self, t):
-        r'\+\d{1,3}'
+        r'\+\s?\d{1,3}'
         # + followed by 0 or 297
-        t.value = int(t.value[1:])
+        t.value = min(int(t.value[1:]), 297)
         return t
 
     def t_P_HP(self, t):
-        r'\+[hH]\d{1,2}'
+        r'\+[hH]\s?\d{1,2}'
         # +H followed by 1~2 digit number
         t.value = int(t.value[2:])
         return t
 
     def t_P_ATK(self, t):
-        r'\+[aA]\d{1,2}'
+        r'\+[aA]\s?\d{1,2}'
         # +A followed by 1~2 digit number
         t.value = int(t.value[2:])
         return t
 
     def t_P_RCV(self, t):
-        r'\+[rR]\d{1,2}'
+        r'\+[rR]\s?\d{1,2}'
         # +R followed by 1~2 digit number
         t.value = int(t.value[2:])
+        return t
+
+    def t_REPEAT(self, t):
+        r'\*\s?\d'
+        # * followed by a number
+        t.value = min(int(t.value[1:]), 6)
         return t
 
     t_ignore = '\t\n'
 
     def t_error(self, t):
-        raise ValueError("Unknown text '{}' at position {}".format(t.value, t.lexpos))
+        raise ValueError("Parse Error: Unknown text '{}' at position {}".format(t.value, t.lexpos))
 
     def build(self, **kwargs):
         # pass debug=1 to enable verbose output
@@ -269,7 +277,9 @@ class PaDTeamLexer(object):
         return self.lexer
 
 
-def validate_latents(card_types, latents):
+def validate_latents(latents, card_types):
+    if latents is None:
+        return None
     if card_types is None:
         return None
     if 'Balance' in card_types:
@@ -309,7 +319,7 @@ def idx_to_xy(idx):
 
 
 class PadBuildImageGenerator(object):
-    def __init__(self, input_str, params, padinfo_cog, build_name='pad_build'):
+    def __init__(self, params, padinfo_cog, build_name='pad_build'):
         self.params = params
         self.padinfo_cog = padinfo_cog
         self.lexer = PaDTeamLexer().build()
@@ -319,17 +329,19 @@ class PadBuildImageGenerator(object):
             'INSTRUCTION': None
         }
         self.build_img = None
-        self.process_build(input_str)
 
     def process_build(self, input_str):
         for team in [row for row in csv.reader(input_str.split(';'), delimiter='/')]:
             team_sublist = []
             for slot in team:
-                team_sublist.extend(self.process_card(slot))
+                try:
+                    team_sublist.extend(self.process_card(slot))
+                except Exception as ex:
+                    self.build['TEAM'] = []
+                    raise ex
             self.build['TEAM'].append(team_sublist)
 
     def process_card(self, card_str, is_assist=False):
-        self.lexer.input(card_str)
         if not is_assist:
             result_card = {
                 '+ATK': 99,
@@ -354,51 +366,67 @@ class PadBuildImageGenerator(object):
                 'SLV': 0,
                 'ON_COLOR': False
             }
+        if len(card_str) == 0:
+            if is_assist:
+                result_card['ID'] = DELAY_BUFFER
+                return result_card, None
+            else:
+                return []
+        self.lexer.input(card_str)
         assist_str = None
-        card_att = None
-        card_types = None
-        try:
-            for tok in iter(self.lexer.token, None):
-                # print('{} - {}'.format(tok.type, tok.value))
-                if tok.type == 'ASSIST':
-                    assist_str = tok.value
-                elif tok.type == 'ID':
-                    if tok.value.lower() == 'sdr':
-                        result_card['ID'] = DELAY_BUFFER
-                    else:
-                        m, err, debug_info = self.padinfo_cog.findMonster(tok.value)
-                        if m is None:
-                            raise err
-                        result_card['ID'] = m.monster_no_jp
-                        card_att = m.attr1
-                        card_types = [m.type1, m.type2, m.type3]
-                elif tok.type == 'LATENT':
-                    result_card['LATENT'] = validate_latents(card_types, tok.value)
-                elif tok.type == 'P_ALL':
-                    if tok.value >= 297:
-                        result_card['+HP'] = 99
-                        result_card['+ATK'] = 99
-                        result_card['+RCV'] = 99
-                    else:
-                        result_card['+HP'] = 0
-                        result_card['+ATK'] = 0
-                        result_card['+RCV'] = 0
-                elif tok.type != 'STATS':
-                    result_card[tok.type.replace('P_', '+')] = tok.value
-        except Exception as ex:
-            print('padbuildimg: {}'.format(str(ex)))
-            return None if is_assist else [None, None]
+        card = None
+        repeat = 1
+        for tok in iter(self.lexer.token, None):
+            # print('{} - {}'.format(tok.type, tok.value))
+            if tok.type == 'ASSIST':
+                assist_str = tok.value
+            elif tok.type == 'REPEAT':
+                repeat = min(tok.value, 6)
+            elif tok.type == 'ID':
+                if tok.value.lower() == 'sdr':
+                    result_card['ID'] = DELAY_BUFFER
+                    return result_card, None
+                else:
+                    card, err, debug_info = self.padinfo_cog.findMonster(tok.value)
+                    if card is None:
+                        raise ValueError('Lookup Error: {} not found'.format(err))
+                    if is_assist and not card.is_inheritable:
+                        return None, None
+                    result_card['ID'] = card.monster_no_jp
+            elif tok.type == 'P_ALL':
+                if tok.value >= 297:
+                    result_card['+HP'] = 99
+                    result_card['+ATK'] = 99
+                    result_card['+RCV'] = 99
+                else:
+                    result_card['+HP'] = 0
+                    result_card['+ATK'] = 0
+                    result_card['+RCV'] = 0
+            elif tok.type != 'STATS':
+                result_card[tok.type.replace('P_', '+')] = tok.value
+
+        result_card['LATENT'] = validate_latents(
+            result_card['LATENT'],
+            [card.type1, card.type2, card.type3]
+        )
+        result_card['LV'] = min(
+            result_card['LV'],
+            110 if card.limitbreak_stats is not None and card.limitbreak_stats > 1 else card.max_level
+        )
 
         if is_assist:
-            return result_card, card_att
+            return result_card, card.attr1
         else:
+            parsed_cards = [result_card]
             if isinstance(assist_str, str):
                 assist_card, assist_att = self.process_card(assist_str, is_assist=True)
-                if card_att is not None and assist_att is not None:
-                    assist_card['ON_COLOR'] = card_att == assist_att
-                return [result_card, assist_card]
+                if card.attr1 is not None and assist_att is not None:
+                    assist_card['ON_COLOR'] = card.attr1 == assist_att
+                parsed_cards.append(assist_card)
             else:
-                return [result_card, None]
+                parsed_cards.append(None)
+            parsed_cards = parsed_cards * repeat
+            return parsed_cards
 
     def combine_latents(self, latents):
         if not latents:
@@ -441,11 +469,7 @@ class PadBuildImageGenerator(object):
     def combine_portrait(self, card, show_stats=True, show_awakes=True):
         if card['ID'] == DELAY_BUFFER:
             return Image.open(self.params.ASSETS_DIR + DELAY_BUFFER + '.png')
-        try:
-            portrait = Image.open(self.params.PORTRAIT_DIR + str(card['ID']) + '.png')
-        except Exception as ex:
-            print('padbuildimg: {}'.format(str(ex)))
-            return None
+        portrait = Image.open(self.params.PORTRAIT_DIR + str(card['ID']) + '.png')
         draw = ImageDraw.Draw(portrait)
         slv_offset = 80
         if show_stats:
@@ -586,12 +610,16 @@ class PadBuildImage:
 
         # start = time.perf_counter()
         params = self.settings.buildImgParams()
-        pbg = PadBuildImageGenerator(build_str, params, self.bot.get_cog('PadInfo'))
-        # print('PARSE: {}'.format(time.perf_counter() - start))
-
-        # start = time.perf_counter()
-        pbg.generate_build_image()
-        # print('DRAW: {}'.format(time.perf_counter() - start))
+        try:
+            pbg = PadBuildImageGenerator(params, self.bot.get_cog('PadInfo'))
+            # print('PARSE: {}'.format(time.perf_counter() - start))
+            pbg.process_build(build_str)
+            # start = time.perf_counter()
+            pbg.generate_build_image()
+            # print('DRAW: {}'.format(time.perf_counter() - start))
+        except Exception as ex:
+            await self.bot.say(box(str(ex) + '\nSee ^helpbuildimg for syntax'))
+            return -1
 
         # start = time.perf_counter()
         if pbg.build_img is not None:
@@ -614,7 +642,7 @@ class PadBuildImage:
                         filename='pad_build.png')
         else:
             await self.bot.say(box('Invalid build, see ^helpbuildimg'))
-        # print('UPLOAD: {}'.format(time.perf_counter() - start))
+        return 0
 
     @commands.command(pass_context=True)
     @checks.is_owner()
