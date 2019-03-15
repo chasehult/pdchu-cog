@@ -15,6 +15,7 @@ from PIL import ImageChops
 
 from __main__ import user_allowed, send_cmd_help
 
+from .rpadutils import ReportableError
 from .rpadutils import CogSettings
 from .utils import checks
 from .utils.chat_formatting import box, inline
@@ -269,7 +270,7 @@ class PaDTeamLexer(object):
     t_ignore = '\t\n'
 
     def t_error(self, t):
-        raise ValueError("Parse Error: Unknown text '{}' at position {}".format(t.value, t.lexpos))
+        raise ReportableError("Parse Error: Unknown text '{}' at position {}".format(t.value, t.lexpos))
 
     def build(self, **kwargs):
         # pass debug=1 to enable verbose output
@@ -389,7 +390,7 @@ class PadBuildImageGenerator(object):
                 else:
                     card, err, debug_info = self.padinfo_cog.findMonster(tok.value)
                     if card is None:
-                        raise ValueError('Lookup Error: {} not found'.format(err))
+                        raise ReportableError('Lookup Error: {}'.format(err))
                     if is_assist and not card.is_inheritable:
                         return None, None
                     result_card['ID'] = card.monster_no_jp
@@ -617,7 +618,7 @@ class PadBuildImage:
             # start = time.perf_counter()
             pbg.generate_build_image()
             # print('DRAW: {}'.format(time.perf_counter() - start))
-        except Exception as ex:
+        except ReportableError as ex:
             await self.bot.say(box(str(ex) + '\nSee ^helpbuildimg for syntax'))
             return -1
 
