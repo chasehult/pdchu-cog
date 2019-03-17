@@ -442,6 +442,8 @@ class PadBuildImageGenerator(object):
                     result_card['+RCV'] = 0
             elif tok.type != 'STATS':
                 result_card[tok.type.replace('P_', '+')] = tok.value
+        if card is None:
+            return []
 
         result_card['LATENT'] = validate_latents(
             result_card['LATENT'],
