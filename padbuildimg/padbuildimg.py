@@ -553,8 +553,8 @@ class PadBuildImageGenerator(object):
             else:
                 awake = Image.open(self.params.ASSETS_DIR + AWK_CIRCLE + '.png')
                 draw = ImageDraw.Draw(awake)
-                draw.text((9, -2), str(card['AWAKE']),
-                          font=ImageFont.truetype(self.params.FONT_NAME, 24), fill='yellow')
+                draw.text((8, -2), str(card['AWAKE']),
+                          font=ImageFont.truetype(self.params.FONT_NAME, 18), fill='yellow')
                 del draw
             portrait.paste(awake, (self.params.PORTRAIT_WIDTH - awake.size[0] - 5, 5), awake)
             awake.close()
