@@ -42,11 +42,12 @@ Repeat:
     *# defines number of times to repeat this particular card
     e.g. whaledor(plutus)*3/whaledor(carat)*2 creates a team of 3 whaledor(plutus) followed by 2 whaledor(carat)
 Stats Format:
-    | LV### SLV## AW# +H## +A## +R## +(0 or 297)
+    | LV### SLV## AW# SA# +H## +A## +R## +(0 or 297)
     | indicates end of card name and start of stats
     LV: level, 1 to 110
-    SLV: skill level, 1 to 99
+    SLV: skill level, 1 to 99 or MAX
     AW: awakenings, 0 to 9
+    SA: super awakening, 0 to 9
     +H: HP plus, 0 to 99
     +A: ATK plus, 0 to 99
     +R: RCV plus, 0 to 99
