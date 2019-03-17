@@ -2,6 +2,7 @@ import math
 import csv
 import os
 import io
+from shutil import rmtree
 import time
 
 import discord
@@ -96,10 +97,19 @@ TYPE_TO_KILLERS_MAP = {
     'Attacker': [7, 2],  # devil physical
     'Healer': [4, 6],  # dragon attacker
 }
+TS_SEQ_AWAKE_MAP = {2765: 3, 2766: 4, 2767: 5, 2768: 6, 2769: 7, 2770: 8, 2771: 9, 2772: 10, 2773: 11, 2774: 12,
+                    2775: 13,
+                    2776: 14, 2777: 15, 2778: 16, 2779: 17, 2780: 18, 2781: 19, 2782: 20, 2783: 21, 2784: 22, 2785: 23,
+                    2786: 24, 2787: 25, 2788: 26, 2789: 27, 2790: 28, 2791: 29, 3897: 30, 7593: 31, 7878: 33, 7879: 35,
+                    7880: 36, 7881: 34, 7882: 32, 9024: 37, 9025: 38, 9026: 39, 9113: 40, 9224: 41, 9397: 43, 9481: 42,
+                    10261: 44, 11353: 45, 11619: 46, 12490: 47, 12735: 48, 12736: 49, 13057: 50, 13567: 51, 13764: 52,
+                    13765: 53, 13898: 54, 13899: 55, 13900: 56, 13901: 57, 13902: 58, 14073: 59, 14074: 60, 14075: 61,
+                    14076: 62, 14950: 63, 15821: 64, 15822: 65, 15823: 66}
+
 AWK_CIRCLE = 'circle'
 AWK_STAR = 'star'
 DELAY_BUFFER = 'delay_buffer'
-REMOTE_ASSET_URL = 'https://github.com/Mushymato/pdchu/raw/master/assets/'
+REMOTE_ASSET_URL = 'https://github.com/Mushymato/pdchu-cog/raw/master/assets/'
 
 
 class DictWithAttributeAccess(dict):
@@ -149,8 +159,18 @@ class PadBuildImgSettings(CogSettings):
 
     async def downloadAllAssets(self):
         params = self.buildImgParams()
+        if os.path.exists(params.ASSETS_DIR):
+            rmtree(params.ASSETS_DIR)
+        os.mkdir(params.ASSETS_DIR)
+        os.mkdir(params.ASSETS_DIR + 'lat/')
+        os.mkdir(params.ASSETS_DIR + 'awk/')
         for idx, lat in LATENTS_MAP.items():
-            await self.downloadAssets(REMOTE_ASSET_URL + lat + '.png', params.ASSETS_DIR + lat + '.png')
+            await self.downloadAssets(
+                REMOTE_ASSET_URL + 'lat/' + lat + '.png', params.ASSETS_DIR + 'lat/' + lat + '.png')
+        for awk in range(3, 67):
+            awk = str(awk)
+            await self.downloadAssets(
+                REMOTE_ASSET_URL + 'awk/' + awk + '.png', params.ASSETS_DIR + 'awk/' + awk + '.png')
         await self.downloadAssets(REMOTE_ASSET_URL + AWK_CIRCLE + '.png', params.ASSETS_DIR + AWK_CIRCLE + '.png')
         await self.downloadAssets(REMOTE_ASSET_URL + AWK_STAR + '.png', params.ASSETS_DIR + AWK_STAR + '.png')
         await self.downloadAssets(REMOTE_ASSET_URL + DELAY_BUFFER + '.png', params.ASSETS_DIR + DELAY_BUFFER + '.png')
@@ -184,6 +204,7 @@ class PaDTeamLexer(object):
         'LV',
         'SLV',
         'AWAKE',
+        'SUPER',
         'P_HP',
         'P_ATK',
         'P_RCV',
@@ -226,14 +247,24 @@ class PaDTeamLexer(object):
         return t
 
     def t_SLV(self, t):
-        r'[sS][lL][vV]\s?\d{1,2}'
-        # SL followed by 1~2 digit number
-        t.value = int(t.value[3:])
+        r'[sS][lL][vV]\s?(\d{1,2}|[mM][aA][xX])'
+        # SL followed by 1~2 digit number or max
+        t.value = t.value[3:]
+        if t.value.isdigit():
+            t.value = int(t.value)
+        else:
+            t.value = 99
         return t
 
     def t_AWAKE(self, t):
         r'[aA][wW]\s?\d'
         # AW followed by 1 digit number
+        t.value = int(t.value[2:])
+        return t
+
+    def t_SUPER(self, t):
+        r'[sS][aA]\s?\d'
+        # SA followed by 1 digit number
         t.value = int(t.value[2:])
         return t
 
@@ -349,6 +380,8 @@ class PadBuildImageGenerator(object):
                 '+HP': 99,
                 '+RCV': 99,
                 'AWAKE': 9,
+                'SUPER': 0,
+                'MAX_AWAKE': 9,
                 'ID': 0,
                 'LATENT': None,
                 'LV': 99,
@@ -360,11 +393,14 @@ class PadBuildImageGenerator(object):
                 '+ATK': 0,
                 '+HP': 0,
                 '+RCV': 0,
-                'AWAKE': 9,
+                'AWAKE': 0,
+                'SUPER': 0,
+                'MAX_AWAKE': 0,
                 'ID': 0,
                 'LATENT': None,
-                'LV': 0,
+                'LV': 1,
                 'SLV': 0,
+                'MAX_SLV': 0,
                 'ON_COLOR': False
             }
         if len(card_str) == 0:
@@ -414,10 +450,19 @@ class PadBuildImageGenerator(object):
             result_card['LV'],
             110 if card.limitbreak_stats is not None and card.limitbreak_stats > 1 else card.max_level
         )
+        result_card['MAX_SLV'] = card.active_skill.turn_max - card.active_skill.turn_min + 1
+        result_card['MAX_AWAKE'] = len(card.awakenings) - card.superawakening_count
 
         if is_assist:
+            result_card['MAX_AWAKE'] = result_card['MAX_AWAKE'] if result_card['AWAKE'] > 0 else 0
+            result_card['AWAKE'] = result_card['MAX_AWAKE']
+            result_card['SUPER'] = 0
             return result_card, card.attr1
         else:
+            result_card['SUPER'] = min(result_card['SUPER'], card.superawakening_count)
+            if result_card['SUPER'] > 0:
+                super_awakes = [TS_SEQ_AWAKE_MAP[x.ts_seq] for x in card.awakenings[-card.superawakening_count:]]
+                result_card['SUPER'] = super_awakes[result_card['SUPER'] - 1]
             parsed_cards = [result_card]
             if isinstance(assist_str, str):
                 assist_card, assist_att = self.process_card(assist_str, is_assist=True)
@@ -455,7 +500,7 @@ class PadBuildImageGenerator(object):
             sorted_latents.extend(one_slot)
         last_height = 0
         for l in sorted_latents:
-            latent_icon = Image.open(self.params.ASSETS_DIR + LATENTS_MAP[l] + '.png')
+            latent_icon = Image.open(self.params.ASSETS_DIR + 'lat/' + LATENTS_MAP[l] + '.png')
             if x_offset + latent_icon.size[0] > self.params.PORTRAIT_WIDTH:
                 row_count += 1
                 x_offset = 0
@@ -467,7 +512,7 @@ class PadBuildImageGenerator(object):
                 break
         return latents_bar
 
-    def combine_portrait(self, card, show_stats=True, show_awakes=True):
+    def combine_portrait(self, card, show_stats=True, show_supers=False):
         if card['ID'] == DELAY_BUFFER:
             return Image.open(self.params.ASSETS_DIR + DELAY_BUFFER + '.png')
         portrait = Image.open(self.params.PORTRAIT_DIR + str(card['ID']) + '.png')
@@ -489,17 +534,18 @@ class PadBuildImageGenerator(object):
             if card['LV'] > 0:
                 outline_text(draw, 5, 75, ImageFont.truetype(self.params.FONT_NAME, 18),
                              'white', 'Lv.{:d}'.format(card['LV']))
-                slv_offset = 62
+                slv_offset = 65
         # skill level
         if card['SLV'] > 0:
+            slv_txt = 'SLv.max' if card['SLV'] >= card['MAX_SLV'] else 'SLv.{:d}'.format(card['SLV'])
             outline_text(draw, 5, slv_offset,
-                         ImageFont.truetype(self.params.FONT_NAME, 14), 'pink', 'SLv.{:d}'.format(card['SLV']))
+                         ImageFont.truetype(self.params.FONT_NAME, 12), 'pink', slv_txt)
         # ID
         outline_text(draw, 67, 82, ImageFont.truetype(self.params.FONT_NAME, 12), 'lightblue', str(card['ID']))
         del draw
-        if show_awakes:
+        if card['MAX_AWAKE'] > 0:
             # awakening
-            if card['AWAKE'] >= 9:
+            if card['AWAKE'] >= card['MAX_AWAKE']:
                 awake = Image.open(self.params.ASSETS_DIR + AWK_STAR + '.png')
             else:
                 awake = Image.open(self.params.ASSETS_DIR + AWK_CIRCLE + '.png')
@@ -507,8 +553,15 @@ class PadBuildImageGenerator(object):
                 draw.text((9, -2), str(card['AWAKE']),
                           font=ImageFont.truetype(self.params.FONT_NAME, 24), fill='yellow')
                 del draw
-            awake.thumbnail((25, 30), Image.LINEAR)
             portrait.paste(awake, (self.params.PORTRAIT_WIDTH - awake.size[0] - 5, 5), awake)
+            awake.close()
+        if show_supers and card['SUPER'] > 0:
+            # SA
+            awake = Image.open(self.params.ASSETS_DIR + 'awk/' + str(card['SUPER']) + '.png')
+            portrait.paste(awake,
+                           (self.params.PORTRAIT_WIDTH - awake.size[0] - 5,
+                            (self.params.PORTRAIT_WIDTH - awake.size[0]) // 2),
+                           awake)
             awake.close()
         return portrait
 
@@ -540,7 +593,7 @@ class PadBuildImageGenerator(object):
                     portrait = self.combine_portrait(
                         card,
                         show_stats=card['ON_COLOR'],
-                        show_awakes=idx % 2 == 0)
+                        show_supers=len(self.build['TEAM']) == 1)
                     if portrait is None:
                         continue
                     x_offset = self.params.PADDING * math.ceil(x / 4)
