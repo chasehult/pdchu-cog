@@ -24,7 +24,7 @@ from .utils.chat_formatting import box, inline
 HELP_MSG = """
 ^buildimg <build_shorthand>
 
-Generates an image representing a team.
+Generates an image representing a team based on a string.
 
 Format: 
     card name(assist)[latent,latent]*repeat|Stats
@@ -32,7 +32,9 @@ Format:
     Separate each card with /
     Separate each team with ;
     To use / in card name, put quote around the entire team slot (e.g. "g/l medjed(g/x zela)"/...)
+    sdr is a special card name for dummy assists/skill delay buffers
 Latent Acronyms:
+    Separate each latent with a ,
     Killers: bak(balanced), phk(physical), hek(healer), drk(dragon), gok(god), aak(attacker, dek(devil), mak(machine)
              evk(evo mat), rek(redeemable), awk(awoken mat), enk(enhance)
     Stats (+ for 2 slot): hp, atk, rcv, all(all stat), hp+, atk+, rcv+
@@ -53,6 +55,19 @@ Stats Format:
     +R: RCV plus, 0 to 99
     +: total plus (+0 or +297 only)
     Case insensitive, order does not matter
+"""
+EXAMPLE_MSG = """
+Examples:
+1P:
+    bj(weld)lv110/baldin[gok, gok, gok](gilgamesh)/youyu(assist reeche)/mel(chocolate)/isis(koenma)/bj(rathian)
+2P:
+    amen/dios(sdr) * 3/whaledor; mnoah(assist jack frost) *3/tengu/tengu[sdr,sdr,sdr,sdr,sdr,sdr](durandalf)
+3P:
+    zela(assist amen) *3/base raizer * 2/zela; zela(assist amen) *4/base valeria/zela; zela * 6
+Latent Validation:
+    eir[drk,drk,sdr]/eir[bak,bak,sdr]
+Stats Validation:
+    dmeta(uruka|lv110+297slvmax)|+h33+a66+r99lv110slv15/hmyne(buruka|lv110+297slv1)|+h99+a99+r99lv110slv15
 """
 
 LATENTS_MAP = {
@@ -364,7 +379,10 @@ class PadBuildImageGenerator(object):
         self.build_img = None
 
     def process_build(self, input_str):
-        for team in [row for row in csv.reader(input_str.split(';'), delimiter='/')]:
+        team_strings = [row for row in csv.reader(input_str.split(';'), delimiter='/')]
+        if len(team_strings) > 3:
+            team_strings = team_strings[0:3]
+        for team in team_strings:
             team_sublist = []
             for slot in team:
                 try:
@@ -423,7 +441,7 @@ class PadBuildImageGenerator(object):
             elif tok.type == 'ID':
                 if tok.value.lower() == 'sdr':
                     result_card['ID'] = DELAY_BUFFER
-                    return result_card, None
+                    card = DELAY_BUFFER
                 else:
                     card, err, debug_info = self.padinfo_cog.findMonster(tok.value)
                     if card is None:
@@ -442,35 +460,38 @@ class PadBuildImageGenerator(object):
                     result_card['+RCV'] = 0
             elif tok.type != 'STATS':
                 result_card[tok.type.replace('P_', '+')] = tok.value
+        card_att = None
         if card is None:
             return []
-
-        result_card['LATENT'] = validate_latents(
-            result_card['LATENT'],
-            [card.type1, card.type2, card.type3]
-        )
-        result_card['LV'] = min(
-            result_card['LV'],
-            110 if card.limitbreak_stats is not None and card.limitbreak_stats > 1 else card.max_level
-        )
-        result_card['MAX_SLV'] = card.active_skill.turn_max - card.active_skill.turn_min + 1
-        result_card['MAX_AWAKE'] = len(card.awakenings) - card.superawakening_count
-
+        elif card != DELAY_BUFFER:
+            result_card['LATENT'] = validate_latents(
+                result_card['LATENT'],
+                [card.type1, card.type2, card.type3]
+            )
+            result_card['LV'] = min(
+                result_card['LV'],
+                110 if card.limitbreak_stats is not None and card.limitbreak_stats > 1 else card.max_level
+            )
+            result_card['MAX_SLV'] = card.active_skill.turn_max - card.active_skill.turn_min + 1
+            result_card['MAX_AWAKE'] = len(card.awakenings) - card.superawakening_count
+            if is_assist:
+                result_card['MAX_AWAKE'] = result_card['MAX_AWAKE'] if result_card['AWAKE'] > 0 else 0
+                result_card['AWAKE'] = result_card['MAX_AWAKE']
+                result_card['SUPER'] = 0
+            else:
+                result_card['SUPER'] = min(result_card['SUPER'], card.superawakening_count)
+                if result_card['SUPER'] > 0:
+                    super_awakes = [TS_SEQ_AWAKE_MAP[x.ts_seq] for x in card.awakenings[-card.superawakening_count:]]
+                    result_card['SUPER'] = super_awakes[result_card['SUPER'] - 1]
+            card_att = card.attr1
         if is_assist:
-            result_card['MAX_AWAKE'] = result_card['MAX_AWAKE'] if result_card['AWAKE'] > 0 else 0
-            result_card['AWAKE'] = result_card['MAX_AWAKE']
-            result_card['SUPER'] = 0
-            return result_card, card.attr1
+            return result_card, card_att
         else:
-            result_card['SUPER'] = min(result_card['SUPER'], card.superawakening_count)
-            if result_card['SUPER'] > 0:
-                super_awakes = [TS_SEQ_AWAKE_MAP[x.ts_seq] for x in card.awakenings[-card.superawakening_count:]]
-                result_card['SUPER'] = super_awakes[result_card['SUPER'] - 1]
             parsed_cards = [result_card]
             if isinstance(assist_str, str):
                 assist_card, assist_att = self.process_card(assist_str, is_assist=True)
-                if card.attr1 is not None and assist_att is not None:
-                    assist_card['ON_COLOR'] = card.attr1 == assist_att
+                if card_att is not None and assist_att is not None:
+                    assist_card['ON_COLOR'] = card_att == assist_att
                 parsed_cards.append(assist_card)
             else:
                 parsed_cards.append(None)
@@ -589,7 +610,7 @@ class PadBuildImageGenerator(object):
             if has_assist:
                 y_offset += self.params.PORTRAIT_WIDTH
             for idx, card in enumerate(team):
-                if idx > 11 or idx > 9 and len(self.build['TEAM']) > 1:
+                if idx > 11 or idx > 9 and len(self.build['TEAM']) % 2 == 0:
                     break
                 if card is not None:
                     x, y = idx_to_xy(idx)
@@ -654,6 +675,7 @@ class PadBuildImage:
     async def helpbuildimg(self, ctx):
         """Help info for the buildimage command."""
         await self.bot.whisper(box(HELP_MSG))
+        await self.bot.whisper(box(EXAMPLE_MSG))
         if checks.admin_or_permissions(manage_server=True):
             await self.bot.whisper(box('Output location can be changed between current channel and '
                                        'direct messages via ^togglebuildimgoutput'))
