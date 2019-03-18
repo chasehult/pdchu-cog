@@ -56,7 +56,15 @@ Stats Format:
     +: total plus (+0 or +297 only)
     Case insensitive, order does not matter
 """
-EXAMPLE_MSG = """
+EXAMPLE_MSG = "Examples:\n1P{}\n2P{}\n3P{}\nLatent Validation{}\nStats Validation{}".format(
+    box("bj(weld)lv110/baldin[gok, gok, gok](gilgamesh)/youyu(assist reeche)/mel(chocolate)/isis(koenma)/bj(rathian)"),
+    box("amen/dios(sdr) * 3/whaledor; mnoah(assist jack frost) *3/tengu/tengu[sdr,sdr,sdr,sdr,sdr,sdr](durandalf)"),
+    box("zela(assist amen) *3/base raizer * 2/zela; zela(assist amen) *4/base valeria/zela; zela * 6"),
+    box("eir[drk,drk,sdr]/eir[bak,bak,sdr]"),
+    box("dmeta(uruka|lv110+297slvmax)|+h33+a66+r99lv110slv15/    hmyne(buruka|lv110+297slv1)|+h99+a99+r99lv110slv15")
+)
+
+"""
 Examples:
 1P:
     bj(weld)lv110/baldin[gok, gok, gok](gilgamesh)/youyu(assist reeche)/mel(chocolate)/isis(koenma)/bj(rathian)
@@ -67,7 +75,8 @@ Examples:
 Latent Validation:
     eir[drk,drk,sdr]/eir[bak,bak,sdr]
 Stats Validation:
-    dmeta(uruka|lv110+297slvmax)|+h33+a66+r99lv110slv15/hmyne(buruka|lv110+297slv1)|+h99+a99+r99lv110slv15
+    dmeta(uruka|lv110+297slvmax)|+h33+a66+r99lv110slv15/    hmyne(buruka|lv110+297slv1)|+h99+a99+r99lv110slv15
+
 """
 
 LATENTS_MAP = {
@@ -675,10 +684,10 @@ class PadBuildImage:
     async def helpbuildimg(self, ctx):
         """Help info for the buildimage command."""
         await self.bot.whisper(box(HELP_MSG))
-        await self.bot.whisper(box(EXAMPLE_MSG))
         if checks.admin_or_permissions(manage_server=True):
-            await self.bot.whisper(box('Output location can be changed between current channel and '
+            await self.bot.whisper(box('For Server Admins: Output location can be changed between current channel and '
                                        'direct messages via ^togglebuildimgoutput'))
+        await self.bot.whisper(EXAMPLE_MSG)
 
     @commands.command(pass_context=True, aliases=['buildimg', 'pdchu'])
     async def padbuildimg(self, ctx, *, build_str: str):
