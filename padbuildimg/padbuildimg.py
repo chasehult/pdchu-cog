@@ -714,7 +714,7 @@ class PadBuildImage:
             with io.BytesIO() as build_io:
                 pbg.build_img.save(build_io, format='PNG')
                 build_io.seek(0)
-                if self.settings.dmOnly(ctx.message.server.id):
+                if ctx.message.server and self.settings.dmOnly(ctx.message.server.id):
                     try:
                         await self.bot.send_file(
                             ctx.message.author,
@@ -762,7 +762,7 @@ class PadBuildImage:
         await self.settings.downloadAllAssets()
         await self.bot.say('Done')
 
-    @commands.command(pass_context=True)
+    @commands.command(pass_context=True, no_pm=True)
     @checks.admin_or_permissions(manage_server=True)
     async def togglebuildimgoutput(self, ctx):
         """
