@@ -3,7 +3,7 @@ import csv
 import os
 import io
 from shutil import rmtree
-import time
+import re
 
 import discord
 from discord.ext import commands
@@ -43,6 +43,7 @@ Latent Acronyms:
 Repeat:
     *# defines number of times to repeat this particular card
     e.g. whaledor(plutus)*3/whaledor(carat)*2 creates a team of 3 whaledor(plutus) followed by 2 whaledor(carat)
+    Latents can also be repeated, e.g. whaledor[sdr*5] for 5 sdr latents
 Stats Format:
     | LV### SLV## AW# SA# +H## +A## +R## +(0 or 297)
     | indicates end of card name and start of stats
@@ -57,10 +58,10 @@ Stats Format:
     Case insensitive, order does not matter
 """
 EXAMPLE_MSG = "Examples:\n1P{}\n2P{}\n3P{}\nLatent Validation{}\nStats Validation{}".format(
-    box("bj(weld)lv110/baldin[gok, gok, gok](gilgamesh)/youyu(assist reeche)/mel(chocolate)/isis(koenma)/bj(rathian)"),
+    box("bj(weld)lv110/baldin[gok *3](gilgamesh)/youyu(assist reeche)/mel(chocolate)/isis(koenma)/bj(rathian)"),
     box("amen/dios(sdr) * 3/whaledor; mnoah(assist jack frost) *3/tengu/tengu[sdr,sdr,sdr,sdr,sdr,sdr](durandalf)"),
     box("zela(assist amen) *3/base raizer * 2/zela; zela(assist amen) *4/base valeria/zela; zela * 6"),
-    box("eir[drk,drk,sdr]/eir[bak,bak,sdr]"),
+    box("eir[drk,drk,sdr]/eir[bak,bak,sdr]/eir[sdr *4, dek]/eir[sdr *8, dek]"),
     box("dmeta(uruka|lv110+297slvmax)|+h33+a66+r99lv110slv15/    hmyne(buruka|lv110+297slv1)|+h99+a99+r99lv110slv15")
 )
 
@@ -253,6 +254,23 @@ class PaDTeamLexer(object):
         r'\[.+?\]'
         # words in []
         t.value = [l.strip().lower() for l in t.value.strip('[]').split(',')]
+        for v in t.value.copy():
+            if '*' not in v:
+                continue
+            tmp = [l.strip() for l in v.split('*')]
+            if len(tmp[0]) == 1 and tmp[0].isdigit():
+                count = int(tmp[0])
+                latent = tmp[1]
+            elif len(tmp[1]) == 1 and tmp[1].isdigit():
+                count = int(tmp[1])
+                latent = tmp[0]
+            else:
+                continue
+            idx = t.value.index(v)
+            t.value.remove(v)
+            for i in range(count):
+                t.value.insert(idx, latent)
+        t.value = t.value[0:6]
         t.value = [REVERSE_LATENTS_MAP[l] for l in t.value if l in REVERSE_LATENTS_MAP]
         return t
 
@@ -388,7 +406,7 @@ class PadBuildImageGenerator(object):
         self.build_img = None
 
     def process_build(self, input_str):
-        team_strings = [row for row in csv.reader(input_str.split(';'), delimiter='/')]
+        team_strings = [row for row in csv.reader(re.split('[;\n]', input_str), delimiter='/') if len(row) > 0]
         if len(team_strings) > 3:
             team_strings = team_strings[0:3]
         for team in team_strings:
@@ -410,6 +428,7 @@ class PadBuildImageGenerator(object):
                 'AWAKE': 9,
                 'SUPER': 0,
                 'MAX_AWAKE': 9,
+                'GOLD_STAR': True,
                 'ID': 0,
                 'LATENT': None,
                 'LV': 99,
@@ -424,6 +443,7 @@ class PadBuildImageGenerator(object):
                 'AWAKE': 0,
                 'SUPER': 0,
                 'MAX_AWAKE': 0,
+                'GOLD_STAR': True,
                 'ID': 0,
                 'LATENT': None,
                 'LV': 1,
@@ -455,8 +475,11 @@ class PadBuildImageGenerator(object):
                     card, err, debug_info = self.padinfo_cog.findMonster(tok.value)
                     if card is None:
                         raise ReportableError('Lookup Error: {}'.format(err))
-                    if is_assist and not card.is_inheritable:
-                        return None, None
+                    if not card.is_inheritable:
+                        if is_assist:
+                            return None, None
+                        else:
+                            result_card['GOLD_STAR'] = False
                     result_card['ID'] = card.monster_no_jp
             elif tok.type == 'P_ALL':
                 if tok.value >= 297:
@@ -492,6 +515,7 @@ class PadBuildImageGenerator(object):
                 if result_card['SUPER'] > 0:
                     super_awakes = [TS_SEQ_AWAKE_MAP[x.ts_seq] for x in card.awakenings[-card.superawakening_count:]]
                     result_card['SUPER'] = super_awakes[result_card['SUPER'] - 1]
+                    result_card['LV'] = max(100, result_card['LV'])
             card_att = card.attr1
         if is_assist:
             return result_card, card_att
@@ -601,8 +625,9 @@ class PadBuildImageGenerator(object):
     def generate_build_image(self, include_instructions=False):
         if self.build is None:
             return
-        p_w = self.params.PORTRAIT_WIDTH * math.ceil(len(self.build['TEAM'][0]) / 2) + \
-              self.params.PADDING * math.ceil(len(self.build['TEAM'][0]) / 10)
+        team_size = max([len(x) for x in self.build['TEAM']])
+        p_w = self.params.PORTRAIT_WIDTH * math.ceil(team_size / 2) + \
+              self.params.PADDING * math.ceil(team_size / 10)
         p_h = (self.params.PORTRAIT_WIDTH + self.params.LATENTS_WIDTH + self.params.PADDING) * \
               2 * len(self.build['TEAM'])
         include_instructions &= self.build['INSTRUCTION'] is not None
