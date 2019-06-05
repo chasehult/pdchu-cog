@@ -111,7 +111,9 @@ LATENTS_MAP = {
     28: 'lres',
     29: 'dres',
     30: 'ah',
-    31: 'sdr'
+    31: 'sdr',
+    32: 'te',
+    33: 'te+'
 }
 REVERSE_LATENTS_MAP = {v: k for k, v in LATENTS_MAP.items()}
 TYPE_TO_KILLERS_MAP = {
