@@ -130,8 +130,8 @@ AWK_CIRCLE = 'circle'
 AWK_STAR = 'star'
 DELAY_BUFFER = 'delay_buffer'
 REMOTE_ASSET_URL = 'https://github.com/Mushymato/pdchu-cog/raw/master/assets/'
-REMOTE_AWK_URL = 'https://pad.protic.site/wp-content/uploads/pad-awks/'
-REMOTE_LAT_URL = 'https://pad.protic.site/wp-content/uploads/pad-latents/'
+REMOTE_AWK_URL = 'https://f002.backblazeb2.com/file/dadguide-data/media/awakenings/{0:03d}.png'
+# REMOTE_LAT_URL = 'https://pad.protic.site/wp-content/uploads/pad-latents/'
 
 class DictWithAttributeAccess(dict):
     def __getattr__(self, key):
@@ -178,7 +178,7 @@ class PadBuildImgSettings(CogSettings):
                 with open(target, "wb") as f:
                     f.write(data)
 
-    async def downloadAllAssets(self, awk_s, awk_e):
+    async def downloadAllAssets(self, awk_ids):
         params = self.buildImgParams()
         if os.path.exists(params.ASSETS_DIR):
             rmtree(params.ASSETS_DIR)
@@ -187,9 +187,8 @@ class PadBuildImgSettings(CogSettings):
         os.mkdir(params.ASSETS_DIR + 'awk/')
         for lat in LATENTS_MAP.values():
             await self.downloadAssets(REMOTE_ASSET_URL + 'lat/' + lat + '.png', params.ASSETS_DIR + 'lat/' + lat + '.png')
-        for awk in range(awk_s, awk_e+1):
-            awk = str(awk)
-            await self.downloadAssets(REMOTE_AWK_URL + awk + '.png', params.ASSETS_DIR + 'awk/' + awk + '.png')
+        for awk in awk_ids:
+            await self.downloadAssets(REMOTE_AWK_URL.format(awk), params.ASSETS_DIR + 'awk/' + str(awk) + '.png')
         await self.downloadAssets(REMOTE_ASSET_URL + AWK_CIRCLE + '.png', params.ASSETS_DIR + AWK_CIRCLE + '.png')
         await self.downloadAssets(REMOTE_ASSET_URL + AWK_STAR + '.png', params.ASSETS_DIR + AWK_STAR + '.png')
         await self.downloadAssets(REMOTE_ASSET_URL + DELAY_BUFFER + '.png', params.ASSETS_DIR + DELAY_BUFFER + '.png')
@@ -782,8 +781,8 @@ class PadBuildImage:
         Refresh assets folder
         """
         await self.bot.say('Downloading assets to {}'.format(self.settings.buildImgParams().ASSETS_DIR))
-        awk_s, awk_e = self.bot.get_cog('Dadguide').database.get_awoken_skill_id_range()
-        await self.settings.downloadAllAssets(awk_s, awk_e)
+        awk_ids = self.bot.get_cog('Dadguide').database.get_awoken_skill_ids()
+        await self.settings.downloadAllAssets(awk_ids)
         await self.bot.say('Done')
 
     @commands.command(pass_context=True, no_pm=True)
