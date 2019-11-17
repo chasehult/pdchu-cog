@@ -125,20 +125,13 @@ TYPE_TO_KILLERS_MAP = {
     'Attacker': [7, 2],  # devil physical
     'Healer': [4, 6],  # dragon attacker
 }
-TS_SEQ_AWAKE_MAP = {2765: 3, 2766: 4, 2767: 5, 2768: 6, 2769: 7, 2770: 8, 2771: 9, 2772: 10, 2773: 11, 2774: 12,
-                    2775: 13,
-                    2776: 14, 2777: 15, 2778: 16, 2779: 17, 2780: 18, 2781: 19, 2782: 20, 2783: 21, 2784: 22, 2785: 23,
-                    2786: 24, 2787: 25, 2788: 26, 2789: 27, 2790: 28, 2791: 29, 3897: 30, 7593: 31, 7878: 33, 7879: 35,
-                    7880: 36, 7881: 34, 7882: 32, 9024: 37, 9025: 38, 9026: 39, 9113: 40, 9224: 41, 9397: 43, 9481: 42,
-                    10261: 44, 11353: 45, 11619: 46, 12490: 47, 12735: 48, 12736: 49, 13057: 50, 13567: 51, 13764: 52,
-                    13765: 53, 13898: 54, 13899: 55, 13900: 56, 13901: 57, 13902: 58, 14073: 59, 14074: 60, 14075: 61,
-                    14076: 62, 14950: 63, 15821: 64, 15822: 65, 15823: 66}
 
 AWK_CIRCLE = 'circle'
 AWK_STAR = 'star'
 DELAY_BUFFER = 'delay_buffer'
 REMOTE_ASSET_URL = 'https://github.com/Mushymato/pdchu-cog/raw/master/assets/'
-
+REMOTE_AWK_URL = 'https://pad.protic.site/wp-content/uploads/pad-awks/'
+REMOTE_LAT_URL = 'https://pad.protic.site/wp-content/uploads/pad-latents/'
 
 class DictWithAttributeAccess(dict):
     def __getattr__(self, key):
@@ -153,7 +146,7 @@ class PadBuildImgSettings(CogSettings):
         build_img_params = DictWithAttributeAccess({
             'ASSETS_DIR': './data/padbuildimg/assets/',
             'PORTRAIT_DIR': './data/padbuildimg/portrait/',
-            'OUTPUT_DIR': './data/padbuildimg/output/',
+            # 'OUTPUT_DIR': './data/padbuildimg/output/',
             'PORTRAIT_WIDTH': 100,
             'PADDING': 10,
             'LATENTS_WIDTH': 25,
@@ -161,8 +154,8 @@ class PadBuildImgSettings(CogSettings):
         })
         if not os.path.exists(build_img_params.ASSETS_DIR):
             os.mkdir(build_img_params.ASSETS_DIR)
-        if not os.path.exists(build_img_params.OUTPUT_DIR):
-            os.mkdir(build_img_params.OUTPUT_DIR)
+        # if not os.path.exists(build_img_params.OUTPUT_DIR):
+        #     os.mkdir(build_img_params.OUTPUT_DIR)
         return build_img_params
 
     def buildImgParams(self):
@@ -185,20 +178,18 @@ class PadBuildImgSettings(CogSettings):
                 with open(target, "wb") as f:
                     f.write(data)
 
-    async def downloadAllAssets(self):
+    async def downloadAllAssets(self, awk_s, awk_e):
         params = self.buildImgParams()
         if os.path.exists(params.ASSETS_DIR):
             rmtree(params.ASSETS_DIR)
         os.mkdir(params.ASSETS_DIR)
         os.mkdir(params.ASSETS_DIR + 'lat/')
         os.mkdir(params.ASSETS_DIR + 'awk/')
-        for idx, lat in LATENTS_MAP.items():
-            await self.downloadAssets(
-                REMOTE_ASSET_URL + 'lat/' + lat + '.png', params.ASSETS_DIR + 'lat/' + lat + '.png')
-        for awk in range(3, 67):
+        for lat in LATENTS_MAP.values():
+            await self.downloadAssets(REMOTE_ASSET_URL + 'lat/' + lat + '.png', params.ASSETS_DIR + 'lat/' + lat + '.png')
+        for awk in range(awk_s, awk_e+1):
             awk = str(awk)
-            await self.downloadAssets(
-                REMOTE_ASSET_URL + 'awk/' + awk + '.png', params.ASSETS_DIR + 'awk/' + awk + '.png')
+            await self.downloadAssets(REMOTE_AWK_URL + awk + '.png', params.ASSETS_DIR + 'awk/' + awk + '.png')
         await self.downloadAssets(REMOTE_ASSET_URL + AWK_CIRCLE + '.png', params.ASSETS_DIR + AWK_CIRCLE + '.png')
         await self.downloadAssets(REMOTE_ASSET_URL + AWK_STAR + '.png', params.ASSETS_DIR + AWK_STAR + '.png')
         await self.downloadAssets(REMOTE_ASSET_URL + DELAY_BUFFER + '.png', params.ASSETS_DIR + DELAY_BUFFER + '.png')
@@ -500,13 +491,16 @@ class PadBuildImageGenerator(object):
         elif card != DELAY_BUFFER:
             result_card['LATENT'] = validate_latents(
                 result_card['LATENT'],
-                [card.type1, card.type2, card.type3]
+                [t.name for t in card.types]
             )
             result_card['LV'] = min(
                 result_card['LV'],
-                110 if card.limitbreak_stats is not None and card.limitbreak_stats > 1 else card.max_level
+                110 if card.limit_mult is not None and card.limit_mult > 1 else card.level
             )
-            result_card['MAX_SLV'] = card.active_skill.turn_max - card.active_skill.turn_min + 1
+            if card.active_skill:
+                result_card['MAX_SLV'] = card.active_skill.turn_max - card.active_skill.turn_min + 1
+            else:
+                result_card['MAX_SLV'] = 0
             result_card['MAX_AWAKE'] = len(card.awakenings) - card.superawakening_count
             if is_assist:
                 result_card['MAX_AWAKE'] = result_card['MAX_AWAKE'] if result_card['AWAKE'] > 0 else 0
@@ -515,9 +509,9 @@ class PadBuildImageGenerator(object):
             else:
                 result_card['SUPER'] = min(result_card['SUPER'], card.superawakening_count)
                 if result_card['SUPER'] > 0:
-                    super_awakes = [TS_SEQ_AWAKE_MAP[x.ts_seq] for x in card.awakenings[-card.superawakening_count:]]
+                    super_awakes = [x.awoken_skill_id for x in card.awakenings[-card.superawakening_count:]]
                     result_card['SUPER'] = super_awakes[result_card['SUPER'] - 1]
-                    result_card['LV'] = max(100, result_card['LV'])
+                    result_card['LV'] = max(110, result_card['LV'])
             card_att = card.attr1
         if is_assist:
             return result_card, card_att
@@ -595,7 +589,7 @@ class PadBuildImageGenerator(object):
                              'white', 'Lv.{:d}'.format(card['LV']))
                 slv_offset = 65
         # skill level
-        if card['SLV'] > 0:
+        if card['MAX_SLV'] > 0 and card['SLV'] > 0:
             slv_txt = 'SLv.max' if card['SLV'] >= card['MAX_SLV'] else 'SLv.{:d}'.format(card['SLV'])
             outline_text(draw, 5, slv_offset,
                          ImageFont.truetype(self.params.FONT_NAME, 12), 'pink', slv_txt)
@@ -771,13 +765,15 @@ class PadBuildImage:
             LATENTS_WIDTH - width of 1 slot latent, default 25
             FONT_NAME - path to font
         """
-        if param_key in ['PORTRAIT_WIDTH', 'PADDING', 'LATENTS_WIDTH']:
-            param_value = int(param_value)
-        if param_key in ['ASSETS_DIR', 'PORTRAIT_DIR', 'OUTPUT_DIR'] \
-                and param_value[-1] not in ['/', '\\']:
-            param_value += '/'
-        self.settings.setBuildImgParamsByKey(param_key, param_value)
-        await self.bot.say(box('Set {} to {}'.format(param_key, param_value)))
+        if param_key in ['ASSETS_DIR', 'PORTRAIT_DIR', 'PORTRAIT_WIDTH', 'PADDING', 'LATENTS_WIDTH', 'FONT_NAME']:
+            if param_key in ['PORTRAIT_WIDTH', 'PADDING', 'LATENTS_WIDTH']:
+                param_value = int(param_value)
+            if param_key in ['ASSETS_DIR', 'PORTRAIT_DIR'] and param_value[-1] not in ['/', '\\']:
+                param_value += '/'
+            self.settings.setBuildImgParamsByKey(param_key, param_value)
+            await self.bot.say(box('Set {} to {}'.format(param_key, param_value)))
+        else:
+            await self.bot.say(box('Invaalid parameter {}'.format(param_key)))
 
     @commands.command(pass_context=True)
     @checks.is_owner()
@@ -786,7 +782,8 @@ class PadBuildImage:
         Refresh assets folder
         """
         await self.bot.say('Downloading assets to {}'.format(self.settings.buildImgParams().ASSETS_DIR))
-        await self.settings.downloadAllAssets()
+        awk_s, awk_e = self.bot.get_cog('Dadguide').database.get_awoken_skill_id_range()
+        await self.settings.downloadAllAssets(awk_s, awk_e)
         await self.bot.say('Done')
 
     @commands.command(pass_context=True, no_pm=True)
