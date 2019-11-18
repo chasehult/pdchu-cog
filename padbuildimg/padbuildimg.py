@@ -472,6 +472,7 @@ class PadBuildImageGenerator(object):
                             return None, None
                         else:
                             result_card['GOLD_STAR'] = False
+                    result_card['REGION'] = 'na' if card.monster_no_na != card.monster_id else 'jp'
                     result_card['ID'] = card.monster_no_jp
             elif tok.type == 'P_ALL':
                 if tok.value >= 297:
@@ -567,7 +568,7 @@ class PadBuildImageGenerator(object):
     def combine_portrait(self, card, show_stats=True, show_supers=False):
         if card['ID'] == DELAY_BUFFER:
             return Image.open(self.params.ASSETS_DIR + DELAY_BUFFER + '.png')
-        portrait = Image.open(self.params.PORTRAIT_DIR + str(card['ID']) + '.png')
+        portrait = Image.open(self.params.PORTRAIT_DIR + '{}/portrait/{}.png'.format(card['REGION'], card['ID']))
         draw = ImageDraw.Draw(portrait)
         slv_offset = 80
         if show_stats:
@@ -677,12 +678,11 @@ class PadBuildImageGenerator(object):
                              font, 'white', 'F{:d} - P{:d} '.format(step['FLOOR'], step['PLAYER'] + 1))
                 x_offset += self.params.PORTRAIT_WIDTH
                 if step['ACTIVE'] is not None:
-                    actives_used = [str(self.build['TEAM'][idx][ids]['ID'])
+                    actives_used = [self.build['TEAM'][idx][ids]
                                     for idx, side in enumerate(step['ACTIVE'])
                                     for ids in side]
                     for card in actives_used:
-                        p_small = Image.open(self.params.PORTRAIT_DIR + str(card) + '.png') \
-                            .resize((self.params.PORTRAIT_WIDTH // 2, self.params.PORTRAIT_WIDTH // 2), Image.LINEAR)
+                        p_small = Image.open(self.params.PORTRAIT_DIR + '{}/portrait/{}.png'.format(card['REGION'], card['ID'])).resize((self.params.PORTRAIT_WIDTH // 2, self.params.PORTRAIT_WIDTH // 2), Image.LINEAR)
                         self.build_img.paste(p_small, (x_offset, y_offset))
                         x_offset += self.params.PORTRAIT_WIDTH // 2
                     x_offset += self.params.PADDING
