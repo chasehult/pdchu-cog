@@ -145,7 +145,7 @@ class PadBuildImgSettings(CogSettings):
     def make_default_build_img_params(self):
         build_img_params = DictWithAttributeAccess({
             'ASSETS_DIR': './data/padbuildimg/assets/',
-            'PORTRAIT_DIR': './data/padbuildimg/{region}/portrait/{monster_no}.png',
+            'PORTRAIT_DIR': './data/padbuildimg/portrait/{monster_id}.png',
             # 'OUTPUT_DIR': './data/padbuildimg/output/',
             'PORTRAIT_WIDTH': 100,
             'PADDING': 10,
@@ -472,8 +472,8 @@ class PadBuildImageGenerator(object):
                             return None, None
                         else:
                             result_card['GOLD_STAR'] = False
-                    result_card['REGION'] = 'na' if card.monster_no_na != card.monster_id else 'jp'
-                    result_card['ID'] = card.monster_no_jp
+                    result_card['MNO'] = card.monster_no_na if card.monster_no_na != card.monster_id else card.monster_no_jp
+                    result_card['ID'] = card.monster_id
             elif tok.type == 'P_ALL':
                 if tok.value >= 297:
                     result_card['+HP'] = 99
@@ -568,7 +568,7 @@ class PadBuildImageGenerator(object):
     def combine_portrait(self, card, show_stats=True, show_supers=False):
         if card['ID'] == DELAY_BUFFER:
             return Image.open(self.params.ASSETS_DIR + DELAY_BUFFER + '.png')
-        portrait = Image.open(self.params.PORTRAIT_DIR.format(region=card['REGION'], monster_no=card['ID']))
+        portrait = Image.open(self.params.PORTRAIT_DIR.format(monster_id=card['ID']))
         draw = ImageDraw.Draw(portrait)
         slv_offset = 80
         if show_stats:
@@ -594,7 +594,7 @@ class PadBuildImageGenerator(object):
             outline_text(draw, 5, slv_offset,
                          ImageFont.truetype(self.params.FONT_NAME, 12), 'pink', slv_txt)
         # ID
-        outline_text(draw, 67, 82, ImageFont.truetype(self.params.FONT_NAME, 12), 'lightblue', str(card['ID']))
+        outline_text(draw, 67, 82, ImageFont.truetype(self.params.FONT_NAME, 12), 'lightblue', str(card['MNO']))
         del draw
         if card['MAX_AWAKE'] > 0:
             # awakening
@@ -682,7 +682,7 @@ class PadBuildImageGenerator(object):
                                     for idx, side in enumerate(step['ACTIVE'])
                                     for ids in side]
                     for card in actives_used:
-                        p_small = Image.open(self.params.PORTRAIT_DIR.format(region=card['REGION'], monster_no=card['ID'])).resize((self.params.PORTRAIT_WIDTH // 2, self.params.PORTRAIT_WIDTH // 2), Image.LINEAR)
+                        p_small = Image.open(self.params.PORTRAIT_DIR.format(monster_id=card['ID'])).resize((self.params.PORTRAIT_WIDTH // 2, self.params.PORTRAIT_WIDTH // 2), Image.LINEAR)
                         self.build_img.paste(p_small, (x_offset, y_offset))
                         x_offset += self.params.PORTRAIT_WIDTH // 2
                     x_offset += self.params.PADDING
@@ -758,7 +758,7 @@ class PadBuildImage:
         """
         Configure PadBuildImageGenerator parameters:
             ASSETS_DIR - directory for storing assets (use ^refreshassets to update)
-            PORTRAIT_DIR - path pattern to where portraits are stored, {region} and {monster_no} must be present
+            PORTRAIT_DIR - path pattern to where portraits are stored, {monster_id} must be present
             PORTRAIT_WIDTH - width of portraits, default 100
             PADDING - padding between various things, default 10
             LATENTS_WIDTH - width of 1 slot latent, default 25
