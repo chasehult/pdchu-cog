@@ -145,7 +145,7 @@ class PadBuildImgSettings(CogSettings):
     def make_default_build_img_params(self):
         build_img_params = DictWithAttributeAccess({
             'ASSETS_DIR': './data/padbuildimg/assets/',
-            'PORTRAIT_DIR': './data/padbuildimg/portrait/',
+            'PORTRAIT_DIR': './data/padbuildimg/{region}/portrait/{monster_no}.png',
             # 'OUTPUT_DIR': './data/padbuildimg/output/',
             'PORTRAIT_WIDTH': 100,
             'PADDING': 10,
@@ -568,7 +568,7 @@ class PadBuildImageGenerator(object):
     def combine_portrait(self, card, show_stats=True, show_supers=False):
         if card['ID'] == DELAY_BUFFER:
             return Image.open(self.params.ASSETS_DIR + DELAY_BUFFER + '.png')
-        portrait = Image.open(self.params.PORTRAIT_DIR + '{}/portrait/{}.png'.format(card['REGION'], card['ID']))
+        portrait = Image.open(self.params.PORTRAIT_DIR.format(region=card['REGION'], monster_no=card['ID']))
         draw = ImageDraw.Draw(portrait)
         slv_offset = 80
         if show_stats:
@@ -682,7 +682,7 @@ class PadBuildImageGenerator(object):
                                     for idx, side in enumerate(step['ACTIVE'])
                                     for ids in side]
                     for card in actives_used:
-                        p_small = Image.open(self.params.PORTRAIT_DIR + '{}/portrait/{}.png'.format(card['REGION'], card['ID'])).resize((self.params.PORTRAIT_WIDTH // 2, self.params.PORTRAIT_WIDTH // 2), Image.LINEAR)
+                        p_small = Image.open(self.params.PORTRAIT_DIR.format(region=card['REGION'], monster_no=card['ID'])).resize((self.params.PORTRAIT_WIDTH // 2, self.params.PORTRAIT_WIDTH // 2), Image.LINEAR)
                         self.build_img.paste(p_small, (x_offset, y_offset))
                         x_offset += self.params.PORTRAIT_WIDTH // 2
                     x_offset += self.params.PADDING
@@ -758,7 +758,7 @@ class PadBuildImage:
         """
         Configure PadBuildImageGenerator parameters:
             ASSETS_DIR - directory for storing assets (use ^refreshassets to update)
-            PORTRAIT_DIR - path to pad monster portraits with name format of <monster_no>.png
+            PORTRAIT_DIR - path pattern to where portraits are stored, {region} and {monster_no} must be present
             PORTRAIT_WIDTH - width of portraits, default 100
             PADDING - padding between various things, default 10
             LATENTS_WIDTH - width of 1 slot latent, default 25
@@ -767,7 +767,7 @@ class PadBuildImage:
         if param_key in ['ASSETS_DIR', 'PORTRAIT_DIR', 'PORTRAIT_WIDTH', 'PADDING', 'LATENTS_WIDTH', 'FONT_NAME']:
             if param_key in ['PORTRAIT_WIDTH', 'PADDING', 'LATENTS_WIDTH']:
                 param_value = int(param_value)
-            if param_key in ['ASSETS_DIR', 'PORTRAIT_DIR'] and param_value[-1] not in ['/', '\\']:
+            if param_key in ['ASSETS_DIR'] and param_value[-1] not in ['/', '\\']:
                 param_value += '/'
             self.settings.setBuildImgParamsByKey(param_key, param_value)
             await self.bot.say(box('Set {} to {}'.format(param_key, param_value)))
