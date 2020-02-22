@@ -145,7 +145,7 @@ class PadBuildImgSettings(CogSettings):
     def make_default_build_img_params(self):
         build_img_params = DictWithAttributeAccess({
             'ASSETS_DIR': './assets/',
-            'PORTRAIT_DIR': './data/padbuildimg/portrait/{monster_id}.png',
+            'PORTRAIT_DIR': 'https://f002.backblazeb2.com/file/dadguide-data/media/icons/{monster_id:05d}.png',
             # 'OUTPUT_DIR': './data/padbuildimg/output/',
             'PORTRAIT_WIDTH': 100,
             'PADDING': 10,
