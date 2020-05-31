@@ -655,7 +655,7 @@ class PadBuildImageGenerator(object):
                     portrait = self.combine_portrait(
                         card,
                         show_stats=card['ON_COLOR'],
-                        show_supers=len(self.build['TEAM']) == 1)
+                        show_supers=len(self.build['TEAM']) != 2)
                     if portrait is None:
                         continue
                     x_offset = self.params.PADDING * math.ceil(x / 4)
